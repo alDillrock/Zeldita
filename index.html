@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Aventura de la espada</title>
+<style>
+body{font-family:Arial,sans-serif;background:#eee;color:#222;text-align:center;padding:10px}
+h1{font-size:24px}
+.wrap{position:relative;max-width:640px;margin:0 auto;line-height:0}
+canvas{width:100%;display:block;border:3px solid #222;image-rendering:pixelated;touch-action:none}
+.hint{max-width:640px;margin:10px auto;font-size:14px;line-height:1.4}
+button{font-size:16px;padding:4px 10px;cursor:pointer}
+.ctl{display:flex;justify-content:center;align-items:center;gap:30px}
+.pad{display:grid;grid-template-columns:repeat(3,50px);grid-template-rows:repeat(3,50px);gap:4px}
+.pad button,.atk{touch-action:none;user-select:none}
+.atk{width:90px;height:90px;border-radius:50%}
+@media (hover:hover) and (pointer:fine){.ctl{display:none}}
+.pb{position:absolute;left:8px;bottom:8px;font-size:12px;line-height:1.4}
+.menu{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;line-height:1.4;overflow:auto}
+.menu[hidden]{display:none}
+.box{background:#fff;border:2px solid #222;padding:12px;width:90%;max-width:400px;text-align:left}
+.box h2,.box h3{margin:6px 0}
+.box label{display:block;margin:6px 0}
+.box input[type=range]{width:100%}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+.row label{flex:1;margin:0}
+.note{font-size:12px;color:#555}
+.integrantes{max-width:640px;margin:18px auto 10px;padding:12px;background:#fff;border:2px solid #222;line-height:1.4}
+.integrantes h2{font-size:20px;margin:0 0 8px}
+.integrantes p{margin:4px 0;font-size:15px}
+
+</style>
+</head>
+<body>
+<h1>Aventura de la espada</h1>
+<div class="wrap"><canvas id="c" width="640" height="480" aria-label="Área de juego"></canvas>
+<button id="pb" class="pb">Pausa</button>
+<div id="menu" class="menu" hidden role="dialog" aria-label="Menú de pausa">
+ <div class="box">
+  <h2>Pausa</h2>
+  <label>Dificultad <output id="o-diff"></output><input type="range" id="s-diff" min=".5" max="2" step=".1" value="1"></label>
+  <label>Velocidad del héroe <output id="o-speed"></output><input type="range" id="s-speed" min=".7" max="1.5" step=".1" value="1"></label>
+  <label>Alcance de la espada <output id="o-reach"></output><input type="range" id="s-reach" min=".8" max="1.6" step=".1" value="1"></label>
+  <label>Vidas iniciales <output id="o-lives"></output><input type="range" id="s-lives" min="1" max="6" step="1" value="3"></label>
+  <div class="note">Las vidas iniciales se aplican al reiniciar la partida.</div>
+  <h3>Música</h3>
+  <input type="file" id="mf" accept="audio/*" aria-label="Subir música">
+  <div id="mn">Ninguna pista cargada</div>
+  <div class="row"><button id="mp">Reproducir</button><label>Volumen<input type="range" id="mv" min="0" max="1" step=".05" value=".5"></label></div>
+  <div class="row"><button id="rs">Reiniciar partida</button><button id="rb">Continuar</button></div>
+ </div>
+</div>
+</div>
+<p class="hint">Mover: WASD o flechas · Espada: Espacio o J · Pausa y ajustes: Esc o P · Reiniciar: Enter. Cada 20 segundos sube el nivel y los enemigos aparecen más rápido y más fuertes.</p>
+<div class="ctl">
+  <div class="pad">
+    <span></span><button data-k="ArrowUp">▲</button><span></span>
+    <button data-k="ArrowLeft">◀</button><span></span><button data-k="ArrowRight">▶</button>
+    <span></span><button data-k="ArrowDown">▼</button><span></span>
+  </div>
+  <button class="atk" data-k=" ">Espada</button>
+</div>
+<section class="integrantes" aria-label="Integrantes del proyecto">
+  <h2>Integrantes</h2>
+  <p>Ricardo Castillo Cruz</p>
+  <p>Diego Valadez Almeyda</p>
+</section>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),W=640,H=480,M=24;
+const keys={};
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(k==='escape'||k==='p'){togglePause();return}if(g.paused)return;keys[k]=true;if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k))e.preventDefault();if(e.key==='Enter'&&(g.over||!g.started))reset(true)});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+document.querySelectorAll('[data-k]').forEach(b=>{const k=b.dataset.k.toLowerCase();
+ const on=e=>{e.preventDefault();keys[k]=true;if(g.over||!g.started)reset(true)};const off=e=>{e.preventDefault();keys[k]=false};
+ b.addEventListener('pointerdown',on);b.addEventListener('pointerup',off);b.addEventListener('pointerleave',off);b.addEventListener('pointercancel',off)});
+cv.addEventListener('pointerdown',()=>{if(g.over||!g.started)reset(true)});
+
+let g,P,E,D,F,swing=0,last=0;
+const S={diff:1,speed:1,reach:1,lives:3};
+function reset(start){
+ g={started:!!start,paused:false,over:false,t:0,score:0,spawn:1.5,kills:0,shake:0};
+ P={x:W/2,y:H/2,dir:0,hp:S.lives,max:S.lives,inv:0,atk:0,cd:0,kx:0,ky:0};
+ E=[];D=[];F=[];
+}
+reset(false);
+
+const level=()=>Math.floor(g.t/20)+1;
+function spawnEnemy(){
+ const t=g.t,r=Math.random();
+ let type='slime';
+ if(t>25&&r<.35)type='bat';
+ if(t>55&&r>.7)type='knight';
+ if(t>110&&r>.9)type='brute';
+ const side=Math.floor(Math.random()*4);
+ let x,y;
+ if(side===0){x=Math.random()*W;y=M}else if(side===1){x=Math.random()*W;y=H-M}else if(side===2){x=M;y=Math.random()*H}else{x=W-M;y=Math.random()*H}
+ const base={slime:[1,45,12],bat:[1,95,10],knight:[3,60,14],brute:[6,50,18]}[type];
+ const hpBonus=Math.floor(t/90);
+ E.push({type,x,y,hp:base[0]+(type==='slime'?hpBonus:0),speed:base[1]*(1+Math.min(t/150,1.2)),r:base[2],kx:0,ky:0,hit:-1,ph:Math.random()*6,flash:0});
+}
+
+function update(dt){
+ if(!g.started||g.over||g.paused)return;
+ g.t+=dt;
+ // movimiento
+ let dx=0,dy=0;
+ if(keys['arrowleft']||keys['a'])dx--;if(keys['arrowright']||keys['d'])dx++;
+ if(keys['arrowup']||keys['w'])dy--;if(keys['arrowdown']||keys['s'])dy++;
+ if(dx||dy){const l=Math.hypot(dx,dy);if(P.atk<=0){P.x+=dx/l*130*S.speed*dt;P.y+=dy/l*130*S.speed*dt;if(Math.abs(dx)>=Math.abs(dy)||dx&&dy)P.dir=dx<0?2:3;if(!dx||(dy&&!dx))P.dir=dy<0?1:0;if(dx&&dy)P.dir=dy<0?1:0}}
+ P.x+=P.kx*dt;P.y+=P.ky*dt;P.kx*=.88;P.ky*=.88;
+ P.x=Math.max(M+10,Math.min(W-M-10,P.x));P.y=Math.max(M+14,Math.min(H-M-14,P.y));
+ P.inv=Math.max(0,P.inv-dt);P.cd=Math.max(0,P.cd-dt);P.atk=Math.max(0,P.atk-dt);
+ if((keys[' ']||keys['j']||keys['z'])&&P.cd<=0){P.atk=.22;P.cd=.38;swing++}
+ // sword
+ const v=[[0,1],[0,-1],[-1,0],[1,0]][P.dir];
+ const sx=P.x+v[0]*26,sy=P.y+v[1]*26;
+ if(P.atk>0){
+  E.forEach(e=>{
+   if(e.hit!==swing&&Math.hypot(e.x-sx,e.y-sy)<e.r+24*S.reach){
+    e.hit=swing;e.hp--;e.flash=.15;
+    const l=Math.hypot(e.x-P.x,e.y-P.y)||1;e.kx=(e.x-P.x)/l*260;e.ky=(e.y-P.y)/l*260;
+    burst(e.x,e.y,'#fff',4);
+   }
+  });
+ }
+ // enemigos
+ E.forEach(e=>{
+  e.ph+=dt*(e.type==='bat'?8:2);e.flash=Math.max(0,e.flash-dt);
+  const l=Math.hypot(P.x-e.x,P.y-e.y)||1;let sp=e.speed;
+  let ax=(P.x-e.x)/l,ay=(P.y-e.y)/l;
+  if(e.type==='bat'){ax+=Math.cos(e.ph)*.9;ay+=Math.sin(e.ph*1.3)*.9}
+  if(e.type==='slime')sp*=.6+.6*Math.abs(Math.sin(e.ph));
+  e.x+=ax*sp*dt+e.kx*dt;e.y+=ay*sp*dt+e.ky*dt;e.kx*=.86;e.ky*=.86;
+  if(P.inv<=0&&Math.hypot(P.x-e.x,P.y-e.y)<e.r+11){
+   P.hp--;P.inv=1.3;g.shake=.25;
+   const k=Math.hypot(P.x-e.x,P.y-e.y)||1;P.kx=(P.x-e.x)/k*320;P.ky=(P.y-e.y)/k*320;
+   burst(P.x,P.y,'#e33',8);
+   if(P.hp<=0){g.over=true}
+  }
+ });
+ // muertes
+ E=E.filter(e=>{
+  if(e.hp>0)return true;
+  g.kills++;g.score+={slime:10,bat:15,knight:30,brute:60}[e.type];
+  burst(e.x,e.y,'#ffe27a',10);
+  if(Math.random()<.1+(P.hp===1?.08:0))D.push({x:e.x,y:e.y,life:9});
+  return false;
+ });
+ // corazones
+ D=D.filter(h=>{h.life-=dt;if(Math.hypot(h.x-P.x,h.y-P.y)<18){if(P.hp<P.max+2){P.hp++;if(P.hp>P.max)P.max=P.hp}burst(h.x,h.y,'#f55',6);return false}return h.life>0});
+ // spawn con dificultad creciente
+ g.spawn-=dt;
+ const interval=Math.max(.4,2.0-g.t*.011)/S.diff;
+ const cap=Math.round(Math.min(40,5+Math.floor(g.t/8))*Math.max(.7,S.diff));
+ if(g.spawn<=0){if(E.length<cap)spawnEnemy();if(g.t>70&&Math.random()<.3&&E.length<cap)spawnEnemy();g.spawn=interval}
+ // partículas
+ F=F.filter(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;return p.life>0});
+ g.shake=Math.max(0,g.shake-dt);
+}
+function burst(x,y,c,n){for(let i=0;i<n;i++){const a=Math.random()*6.28,s=40+Math.random()*100;F.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.4,c})}}
+
+function heart(x,y,s,full){
+ ctx.fillStyle=full?'#d8322f':'#4a2a2a';
+ ctx.beginPath();ctx.moveTo(x,y+s*.35);
+ ctx.bezierCurveTo(x-s*.7,y-s*.2,x-s*.2,y-s*.8,x,y-s*.25);
+ ctx.bezierCurveTo(x+s*.2,y-s*.8,x+s*.7,y-s*.2,x,y+s*.35);ctx.fill();
+}
+
+function drawPlayer(){
+ if(P.inv>0&&Math.floor(P.inv*14)%2)return;
+ const x=P.x,y=P.y,v=[[0,1],[0,-1],[-1,0],[1,0]][P.dir];
+ ctx.fillStyle='#2e9e3e';ctx.fillRect(x-10,y-10,20,20);
+ ctx.fillStyle='#fff';ctx.fillRect(x+v[0]*6-3,y+v[1]*6-3,6,6);
+ if(P.atk>0){
+  const a=Math.atan2(v[1],v[0])-1.2+(1-P.atk/.22)*2.4;
+  ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.scale(S.reach,S.reach);
+  ctx.fillStyle='#ccc';ctx.fillRect(10,-2,28,4);ctx.restore();
+ }
+}
+
+function drawEnemy(e){
+ ctx.fillStyle=e.flash>0?'#fff':{slime:'#3bb4d8',bat:'#8a4fc0',knight:'#888',brute:'#c0392b'}[e.type];
+ if(e.type==='slime'||e.type==='bat'){ctx.beginPath();ctx.arc(e.x,e.y,e.r,0,6.3);ctx.fill()}
+ else ctx.fillRect(e.x-e.r,e.y-e.r,e.r*2,e.r*2);
+}
+
+function drawText(t,x,y,s,col,al){ctx.font=`bold ${s}px Georgia,serif`;ctx.textAlign=al||'center';ctx.fillStyle='#000';ctx.fillText(t,x+2,y+2);ctx.fillStyle=col||'#fff';ctx.fillText(t,x,y)}
+
+function draw(){
+ ctx.save();
+ if(g.shake>0)ctx.translate((Math.random()-.5)*6,(Math.random()-.5)*6);
+ ctx.fillStyle='#7ccf6a';ctx.fillRect(0,0,W,H);
+ ctx.fillStyle='#3d7a2e';ctx.fillRect(0,0,W,M);ctx.fillRect(0,H-M,W,M);ctx.fillRect(0,0,M,H);ctx.fillRect(W-M,0,M,H);
+ // corazones recogibles
+ D.forEach(h=>{if(h.life<3&&Math.floor(h.life*8)%2)return;heart(h.x,h.y+Math.sin(g.t*5)*2,18,true)});
+ const items=[...E.map(e=>({y:e.y,f:()=>drawEnemy(e)})),{y:P.y,f:drawPlayer}].sort((a,b)=>a.y-b.y);
+ items.forEach(i=>i.f());
+ F.forEach(p=>{ctx.globalAlpha=Math.max(0,p.life*2.5);ctx.fillStyle=p.c;ctx.fillRect(p.x,p.y,4,4)});ctx.globalAlpha=1;
+ ctx.restore();
+ // HUD
+ ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(M,M,W-2*M,34);
+ for(let i=0;i<P.max;i++)heart(M+18+i*24,M+19,20,i<P.hp);
+ drawText('Nivel '+level(),W/2,M+25,18,'#ffe27a');
+ drawText(String(g.score).padStart(5,'0')+' pts',W-M-8,M+25,18,'#fff','right');
+ const sec=Math.floor(g.t);drawText(Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0'),W-M-8,H-M-8,14,'#fff','right');
+ if(!g.started){
+  ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+  drawText('Aventura de la espada',W/2,H/2-30,34,'#ffe27a');
+  drawText('Sobrevive a las oleadas de enemigos',W/2,H/2+6,18);
+  drawText('Pulsa Enter o toca para empezar',W/2,H/2+44,18,'#9be07a');
+ }
+ if(g.over){
+  ctx.fillStyle='rgba(60,0,0,.65)';ctx.fillRect(0,0,W,H);
+  drawText('Fin del juego',W/2,H/2-40,38,'#ff7a6a');
+  drawText(g.score+' puntos · '+g.kills+' enemigos · nivel '+level(),W/2,H/2,18);
+  drawText('Pulsa Enter o toca para reintentar',W/2,H/2+40,18,'#9be07a');
+ }
+}
+
+function loop(ts){
+ const dt=Math.min(.05,(ts-last)/1000||0);last=ts;
+ update(dt);draw();requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// Menú de pausa
+const $=id=>document.getElementById(id),menu=$('menu');
+function setPause(v){g.paused=v;menu.hidden=!v;for(const k in keys)keys[k]=false;if(v)$('rb').focus()}
+function togglePause(){setPause(!g.paused)}
+$('pb').onclick=togglePause;$('rb').onclick=()=>setPause(false);
+$('rs').onclick=()=>{reset(true);setPause(false)};
+['diff','speed','reach','lives'].forEach(k=>{const s=$('s-'+k),o=$('o-'+k);const f=()=>{S[k]=+s.value;o.textContent=k==='lives'?s.value:(+s.value).toFixed(1)+'×'};s.oninput=f;f()});
+// Música subida por la persona
+const au=new Audio();au.loop=true;au.volume=.5;let aurl;
+$('mf').onchange=e=>{const f=e.target.files[0];if(!f)return;if(aurl)URL.revokeObjectURL(aurl);aurl=URL.createObjectURL(f);au.src=aurl;au.play().catch(()=>{});$('mn').textContent=f.name};
+$('mp').onclick=()=>{if(!au.src)return;au.paused?au.play().catch(()=>{}):au.pause()};
+au.onplay=au.onpause=()=>{$('mp').textContent=au.paused?'Reproducir':'Pausar'};
+$('mv').oninput=e=>{au.volume=+e.target.value};
+</script>
+</body>
+</html>
